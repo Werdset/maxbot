@@ -1,10 +1,10 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="maxbot",
-    version="0.1.5",
+    name="umaxbot",
+    version="0.1.0",
     description="Async framework for building bots for MAX messenger (aiogram-style)",
-    long_description=open("../maxbot/README.md", encoding="utf-8").read(),
+    long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     author="werdset",
     author_email="vladimirwerdset@gmail.com",

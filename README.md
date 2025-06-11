@@ -10,7 +10,7 @@
 ## Установка
 
 ```bash
-pip install .
+pip install umaxbot
 ```
 
 ## Пример
