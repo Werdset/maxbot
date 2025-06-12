@@ -5,10 +5,18 @@ class User(BaseModel):
     id: int = Field(alias="user_id")
     first_name: str = ""
     last_name: str = ""
+    is_bot: Optional[bool] = None
     name: str = ""
+    last_activity_time: Optional[int] = 0
 
     class Config:
         populate_by_name = True
+
+
+class Recipient(BaseModel):
+    chat_id: int
+    chat_type: str
+    user_id: int
 
 class Chat(BaseModel):
     id: int
@@ -33,6 +41,7 @@ class Callback(BaseModel):
     callback_id: str
     payload: str
     user: User
+    message: Message
 
 class InlineKeyboardButton(BaseModel):
     text: str
