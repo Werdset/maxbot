@@ -1,6 +1,6 @@
 import asyncio
 
-from filters import FilterExpression
+from .filters import FilterExpression
 from .router import Router
 from .types import Message, Callback
 from maxbot.bot import Bot
@@ -60,7 +60,10 @@ class Dispatcher:
 
                         try:
 
-                            cb = Callback(**update["callback"])
+                            cb = Callback(
+                                **update["callback"],
+                                message=Message.from_raw(update["message"])
+                            )
 
                             for func, flt in self.callback_handlers:
                                 if flt is None or flt.check(cb):
