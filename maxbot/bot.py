@@ -41,21 +41,28 @@ class Bot:
 
     async def send_message(
             self,
-            chat_id: int,
-            text: str,
+            chat_id: Optional[int] = None,
+            user_id: Optional[int] = None,
+            text: str = "",
             reply_markup: Optional[InlineKeyboardMarkup] = None,
             notify: bool = True,
             format: Optional[str] = None
     ):
+        if not (chat_id or user_id):
+            raise ValueError("Нужно передать хотя бы один из параметров: chat_id или user_id")
+
         params = {
-            "access_token": self.token,
-            "user_id": chat_id,
-             # API может ожидать "true"/"false"
+            "access_token": self.token
         }
+
+        if chat_id:
+            params["chat_id"] = chat_id
+        else:
+            params["user_id"] = user_id
 
         json_body = {
             "text": text,
-            "notify": notify,
+            "notify": str(notify).lower(),  # если API принимает как "true"/"false"
         }
 
         if format:

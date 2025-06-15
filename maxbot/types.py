@@ -1,6 +1,9 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
+from maxbot.fsm import State
+
+
 class User(BaseModel):
     id: int = Field(alias="user_id")
     first_name: str = ""
@@ -27,21 +30,78 @@ class Message(BaseModel):
     text: str
     chat: Chat
     sender: User
+    forward_from: Optional[User] = None
+    forward_mid: Optional[str] = None
 
     @classmethod
     def from_raw(cls, raw: dict):
+        link = raw.get("link", {})
+        forward_user = link.get("sender")
+        forward_msg = link.get("message")
+
         return cls(
             id=raw["body"]["mid"],
-            text=raw["body"]["text"],
+            text=raw["body"].get("text", ""),
             chat=Chat(id=raw["recipient"]["chat_id"], type=raw["recipient"]["chat_type"]),
-            sender=User(user_id=raw["sender"]["user_id"], name=raw["sender"]["name"])
+            sender=User(user_id=raw["sender"]["user_id"], name=raw["sender"]["name"]),
+            forward_from=User(**forward_user) if forward_user else None,
+            forward_mid=forward_msg["mid"] if forward_msg else None
         )
+
+
+    @property
+    def dispatcher(self):
+        from maxbot.dispatcher import get_current_dispatcher  # 👈 импорт внутри метода
+        return get_current_dispatcher()
+
+    def user_id(self) -> int:
+        return self.sender.id
+
+    async def set_state(self, state: State):
+        self.dispatcher.storage.set_state(self.user_id(), state)
+
+    async def get_state(self) -> Optional[str]:
+        return self.dispatcher.storage.get_state(self.user_id())
+
+    async def reset_state(self):
+        self.dispatcher.storage.reset_state(self.user_id())
+
+    async def update_data(self, **kwargs):
+        self.dispatcher.storage.update_data(self.user_id(), **kwargs)
+
+    async def get_data(self) -> dict:
+        return self.dispatcher.storage.get_data(self.user_id())
+
 
 class Callback(BaseModel):
     callback_id: str
     payload: str
     user: User
     message: Message
+
+    @property
+    def dispatcher(self):
+        from maxbot.dispatcher import get_current_dispatcher  # 👈 импорт внутри метода
+        return get_current_dispatcher()
+
+    def user_id(self) -> int:
+        return self.user.id
+
+    async def set_state(self, state: State):
+        self.dispatcher.storage.set_state(self.user_id(), state)
+
+    async def get_state(self) -> Optional[str]:
+        return self.dispatcher.storage.get_state(self.user_id())
+
+    async def reset_state(self):
+        self.dispatcher.storage.reset_state(self.user_id())
+
+    async def update_data(self, **kwargs):
+        self.dispatcher.storage.update_data(self.user_id(), **kwargs)
+
+    async def get_data(self) -> dict:
+        return self.dispatcher.storage.get_data(self.user_id())
+
 
 class InlineKeyboardButton(BaseModel):
     text: str
