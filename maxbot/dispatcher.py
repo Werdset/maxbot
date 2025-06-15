@@ -1,5 +1,6 @@
 import asyncio
 
+from .fsm import FSMStorage
 from .filters import FilterExpression
 from .router import Router
 from .types import Message, Callback
@@ -9,6 +10,7 @@ from typing import Callable, List
 class Dispatcher:
     def __init__(self, bot: Bot):
         self.bot = bot
+        self.storage = FSMStorage()
         self.message_handlers: List[tuple[Callable, FilterExpression | None]] = []
         self.callback_handlers: List[tuple[Callable, FilterExpression | None]] = []
         self.routers: list[Router] = []
@@ -46,6 +48,7 @@ class Dispatcher:
 
                     if update_type == "message_created":
                         msg = Message.from_raw(update["message"])
+                        set_current_dispatcher(self)
                         for func, flt in self.message_handlers:
                             if flt is None or flt.check(msg):
                                 await func(msg)
@@ -64,7 +67,7 @@ class Dispatcher:
                                 **update["callback"],
                                 message=Message.from_raw(update["message"])
                             )
-
+                            set_current_dispatcher(self)
                             for func, flt in self.callback_handlers:
                                 if flt is None or flt.check(cb):
                                     await func(cb)
@@ -96,3 +99,18 @@ class Dispatcher:
 
     def run_polling(self):
         asyncio.run(self._polling())
+
+
+# Глобальная ссылка на активный Dispatcher
+from contextvars import ContextVar
+
+_current_dispatcher: ContextVar["Dispatcher"] = ContextVar("_current_dispatcher", default=None)
+
+def get_current_dispatcher() -> "Dispatcher":
+    dispatcher = _current_dispatcher.get()
+    if dispatcher is None:
+        raise RuntimeError("Dispatcher not set in context")
+    return dispatcher
+
+def set_current_dispatcher(dispatcher: "Dispatcher"):
+    _current_dispatcher.set(dispatcher)

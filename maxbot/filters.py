@@ -1,3 +1,6 @@
+from maxbot.fsm import State
+
+
 class FilterExpression:
     def __init__(self, attr: str, op: str = None, value: any = None):
         self.attr = attr
@@ -23,3 +26,21 @@ class FMeta:
         return FilterExpression(item)
 
 F = FMeta()
+
+
+class StateFilter:
+    def __init__(self, state: State):
+        self.state = state.full_name()
+
+    def check(self, data):
+        user_id = data.user.id if hasattr(data, 'user') else data.sender.id
+        state = data.dispatcher.storage.get_state(user_id)
+        return state == self.state
+    
+    
+class TextStartsFilter(FilterExpression):
+    def __init__(self, prefix: str):
+        self.prefix = prefix
+
+    def check(self, update) -> bool:
+        return getattr(update, "payload", "").startswith(self.prefix)
