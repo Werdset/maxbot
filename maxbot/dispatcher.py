@@ -13,6 +13,7 @@ class Dispatcher:
         self.storage = FSMStorage()
         self.message_handlers: List[tuple[Callable, FilterExpression | None]] = []
         self.callback_handlers: List[tuple[Callable, FilterExpression | None]] = []
+        self.bot_started_handlers = []
         self.routers: list[Router] = []
 
     def message(self, filter: FilterExpression = None):
@@ -31,6 +32,10 @@ class Dispatcher:
             return func
 
         return decorator
+
+    def bot_started(self, func):
+        self.bot_started_handlers.append(func)
+        return func
 
     async def _polling(self):
         marker = 0
@@ -83,9 +88,20 @@ class Dispatcher:
 
                             print(f"[Dispatcher] Payload:\n{update}")
 
+
                     elif update_type == "bot_started":
+
                         print("🚀 Бот запущен новым пользователем!")
-                        # можешь тут вызывать специальные хендлеры
+
+                        set_current_dispatcher(self)
+
+                        for func in self.bot_started_handlers:
+                            await func(update)
+
+                        for router in self.routers:
+
+                            for func in router.bot_started_handlers:
+                                await func(update)
 
                     # обновляем offset/marker
                     marker = response.get("marker", marker)
@@ -95,7 +111,7 @@ class Dispatcher:
                 import traceback
                 traceback.print_exc()
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.3)
 
     def run_polling(self):
         asyncio.run(self._polling())
