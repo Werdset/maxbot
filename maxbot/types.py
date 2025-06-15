@@ -30,15 +30,24 @@ class Message(BaseModel):
     text: str
     chat: Chat
     sender: User
+    forward_from: Optional[User] = None
+    forward_mid: Optional[str] = None
 
     @classmethod
     def from_raw(cls, raw: dict):
+        link = raw.get("link", {})
+        forward_user = link.get("sender")
+        forward_msg = link.get("message")
+
         return cls(
             id=raw["body"]["mid"],
-            text=raw["body"]["text"],
+            text=raw["body"].get("text", ""),
             chat=Chat(id=raw["recipient"]["chat_id"], type=raw["recipient"]["chat_type"]),
-            sender=User(user_id=raw["sender"]["user_id"], name=raw["sender"]["name"])
+            sender=User(user_id=raw["sender"]["user_id"], name=raw["sender"]["name"]),
+            forward_from=User(**forward_user) if forward_user else None,
+            forward_mid=forward_msg["mid"] if forward_msg else None
         )
+
 
     @property
     def dispatcher(self):
