@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from maxbot.fsm import State
 
@@ -25,6 +25,18 @@ class Chat(BaseModel):
     id: int
     type: str
 
+
+class Attachment(BaseModel):
+    type: str
+    url: Optional[str] = None
+    token: Optional[str] = None
+    id: Optional[str] = None
+
+    async def download(self, bot, dest_path: Optional[str] = None):
+        if not self.url:
+            raise ValueError("У вложения нет url для скачивания")
+        return await bot.download_media(self.url, dest_path)
+
 class Message(BaseModel):
     id: str
     text: str
@@ -32,20 +44,34 @@ class Message(BaseModel):
     sender: User
     forward_from: Optional[User] = None
     forward_mid: Optional[str] = None
+    attachments: List[Attachment] = []
 
     @classmethod
     def from_raw(cls, raw: dict):
         link = raw.get("link", {})
         forward_user = link.get("sender")
         forward_msg = link.get("message")
+        body = raw.get("body", {})
+
+        # Парсим вложения:
+        attachments = []
+        for att in body.get("attachments", []):
+            payload = att.get("payload", {})
+            attachments.append(Attachment(
+                type=att.get("type"),
+                url=payload.get("url"),
+                token=payload.get("token"),
+                id=payload.get("id"),
+            ))
 
         return cls(
-            id=raw["body"]["mid"],
-            text=raw["body"].get("text", ""),
+            id=body["mid"],
+            text=body.get("text", ""),
             chat=Chat(id=raw["recipient"]["chat_id"], type=raw["recipient"]["chat_type"]),
             sender=User(user_id=raw["sender"]["user_id"], name=raw["sender"]["name"]),
             forward_from=User(**forward_user) if forward_user else None,
-            forward_mid=forward_msg["mid"] if forward_msg else None
+            forward_mid=forward_msg["mid"] if forward_msg else None,
+            attachments=attachments
         )
 
 
@@ -71,6 +97,20 @@ class Message(BaseModel):
 
     async def get_data(self) -> dict:
         return self.dispatcher.storage.get_data(self.user_id())
+
+    def get_attachment(self, type_: str) -> Optional[Attachment]:
+        """
+        Вернёт первое вложение указанного типа (например, 'audio', 'image'), либо None.
+        """
+        return next((a for a in self.attachments if a.type == type_), None)
+
+    def get_attachments(self, type_: str) -> List[Attachment]:
+        """
+        Вернёт список всех вложений указанного типа.
+        """
+        return [a for a in self.attachments if a.type == type_]
+
+
 
 
 class Callback(BaseModel):
@@ -105,14 +145,31 @@ class Callback(BaseModel):
 
 class InlineKeyboardButton(BaseModel):
     text: str
-    callback_data: str
+    callback_data: Optional[str] = None
+    url: Optional[str] = None
+    type: Optional[Literal["callback", "link", "request_geo_location", "request_contact", "chat"]] = None
 
     def to_dict(self):
-        return {
-            "type": "callback",
+        btn_type = self.type
+
+        if not btn_type:
+            # Автоопределение по наличию полей
+            if self.url:
+                btn_type = "link"
+            else:
+                btn_type = "callback"
+
+        data = {
+            "type": btn_type,
             "text": self.text,
-            "payload": self.callback_data
         }
+
+        if btn_type == "link" and self.url:
+            data["url"] = self.url
+        elif self.callback_data:
+            data["payload"] = self.callback_data
+
+        return data
 
 class InlineKeyboardMarkup(BaseModel):
     inline_keyboard: List[List[InlineKeyboardButton]]

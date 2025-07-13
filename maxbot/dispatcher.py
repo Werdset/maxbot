@@ -113,8 +113,15 @@ class Dispatcher:
 
             await asyncio.sleep(0.3)
 
-    def run_polling(self):
-        asyncio.run(self._polling())
+    async def run_polling(self):
+        # Один раз показать информацию о боте при старте polling
+        try:
+            me = await self.bot.get_me()
+            print(f"🤖 Bot: {me.get('username', me)} | ID: {me.get('id', '-')}")
+        except Exception as e:
+            print("❌ Ошибка при получении информации о боте:", e)
+            return
+        await self._polling()
 
 
 # Глобальная ссылка на активный Dispatcher
