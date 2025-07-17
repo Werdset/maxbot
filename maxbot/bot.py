@@ -147,8 +147,11 @@ class Bot:
     async def upload_file(self, file_path: str, media_type: str) -> str:
         # 1. Получаем URL загрузки
         resp = await self._request("POST", "/uploads", params={"type": media_type})
-        upload_url = resp["url"]
+        upload_url = resp.get("url")
+        if not upload_url:
+            raise ValueError("Не удалось получить URL для загрузки")
 
+        # Загружаем файл
         mime_type, _ = mimetypes.guess_type(file_path)
         with open(file_path, "rb") as f:
             files = {"data": (file_path, f, mime_type or "application/octet-stream")}
@@ -159,32 +162,37 @@ class Bot:
                 print("[DEBUG] upload_resp.status_code:", upload_resp.status_code)
                 print("[DEBUG] upload_resp.text:", upload_resp.text)
 
-                if "<retval>1</retval>" not in upload_resp.text:
-                    raise Exception(f"Ошибка загрузки файла: {upload_resp.text}")
-
-                # Парсим JSON из ответа после загрузки файла
-                try:
+                # Для видео и аудио токен будет в ответе сразу
+                if media_type in ("video", "audio"):
                     result = upload_resp.json()
-                except ValueError:
-                    raise ValueError("Не удалось распарсить JSON в ответе от сервера")
+                    if "token" in result:
+                        return result["token"]
 
-        # 2. Извлекаем токен в зависимости от типа медиа
-        if media_type == "image":
-            if "photos" in result and result["photos"]:
-                first_size = next(iter(result["photos"].values()))
-                token = first_size.get("token")
-                if token:
-                    return token
-            raise ValueError("Не найден токен для изображения")
+                # Для изображений и файлов токен возвращается в ответе на загрузку
+                if media_type == "image":
+                    try:
+                        result = upload_resp.json()
+                        print("[DEBUG] result:", result)
+                    except ValueError:
+                        raise ValueError("Не удалось распарсить JSON в ответе от сервера")
 
-        elif media_type in ("video", "audio", "file"):
-            token = result.get("token")
-            if token:
-                return token
-            raise ValueError(f"Не найден токен для {media_type}")
+                    if "photos" in result and result["photos"]:
+                        photo_key = next(iter(result["photos"]))
+                        token = result["photos"][photo_key].get("token")
+                        if token:
+                            print(f"[DEBUG] Извлечённый токен: {token}")
+                            return token
+                    raise ValueError("Не найден токен для изображения")
 
-        else:
-            raise ValueError(f"Неизвестный тип медиа: {media_type}")
+                if media_type == "file":
+                    try:
+                        result = upload_resp.json()
+                        if "token" in result:
+                            return result["token"]
+                    except ValueError:
+                        raise ValueError("Не удалось распарсить JSON для файла")
+
+        return None
 
     async def send_file(
             self,
@@ -195,15 +203,16 @@ class Bot:
             text: str = "",
             reply_markup: Optional[InlineKeyboardMarkup] = None,
             notify: bool = True,
-            format: Optional[str] = None, max_retries = 3
+            format: Optional[str] = None, max_retries=3
     ):
-
-
-
         # Загрузка файла на сервер
         tokens = await self.upload_file(file_path, media_type)
+        if not tokens:
+            raise ValueError("Не удалось получить токен для файла")
+
         print("token:", tokens)
         await asyncio.sleep(5)
+
         # Базовое вложение — медиафайл
         attachments = [
             {
