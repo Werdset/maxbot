@@ -12,11 +12,18 @@ class Bot:
         self.base_url = self.BASE_URL
         self.client = httpx.AsyncClient()
 
-    async def _request(self, method: str, path: str, params=None, json=None):
+    async def _request(self, method: str, path: str, params=None, json=None, headers=None):
         if params is None:
             params = {}
-        params["access_token"] = self.token  # 👈 всегда добавляем токен
-        headers = {"Content-Type": "application/json"}
+
+        if headers is None:
+            headers = {}
+
+        headers.update({
+            "Content-Type": "application/json",
+            "Authorization": self.token  # ❗ теперь только тут
+        })
+
         try:
             response = await self.client.request(
                 method=method,
@@ -30,31 +37,27 @@ class Bot:
             return response.json()
         except httpx.HTTPStatusError as e:
             print(f"[Bot] Ошибка запроса: {e}")
-            print(f"[Bot] Ответ сервера: {e.response.status_code} {e.response.text}")  # 👈 вот это ключ
+            print(f"[Bot] Ответ сервера: {e.response.status_code} {e.response.text}")
             raise
         except httpx.ReadTimeout:
-            print("[Bot] Таймаут при ожидании ответа (нормально для long polling)")
             return {}
 
     async def get_me(self):
         return await self._request("GET", "/me")
 
     async def send_message(
-            self,
-            chat_id: Optional[int] = None,
-            user_id: Optional[int] = None,
-            text: str = "",
-            reply_markup: Optional[InlineKeyboardMarkup] = None,
-            notify: bool = True,
-            format: Optional[str] = None
+        self,
+        chat_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        text: str = "",
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+        notify: bool = True,
+        format: Optional[str] = None
     ):
         if not (chat_id or user_id):
-            raise ValueError("Нужно передать хотя бы один из параметров: chat_id или user_id")
+            raise ValueError("Нужно передать chat_id или user_id")
 
-        params = {
-            "access_token": self.token
-        }
-
+        params = {}
         if chat_id:
             params["chat_id"] = chat_id
         else:
@@ -62,7 +65,7 @@ class Bot:
 
         json_body = {
             "text": text,
-            "notify": str(notify).lower(),  # если API принимает как "true"/"false"
+            "notify": notify  # ✅ bool, не строка
         }
 
         if format:
@@ -71,15 +74,11 @@ class Bot:
         if reply_markup:
             json_body["attachments"] = [reply_markup.to_attachment()]
 
-        print("[send_message] params:", params)
-        print("[send_message] json:", json_body)
-
-        return await self.client.post(
-            f"{self.base_url}/messages",
+        return await self._request(
+            "POST",
+            "/messages",
             params=params,
-            json=json_body,
-            headers={"Content-Type": "application/json"},
-            timeout=httpx.Timeout(30.0)
+            json=json_body
         )
 
     async def answer_callback(self, callback_id: str, notification: str):
@@ -94,39 +93,41 @@ class Bot:
             json={"notification": notification}
         )
 
-    async def update_message(self,
-            message_id: str,
-            text: str,
-            reply_markup: Optional[InlineKeyboardMarkup] = None,
-            notify: bool = True,
-            format: Optional[str] = None):
+    async def update_message(
+        self,
+        message_id: str,
+        text: str,
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+        notify: bool = True,
+        format: Optional[str] = None):
 
         params = {
-            "access_token": self.token,
-            "message_id": message_id,
-            # API может ожидать "true"/"false"
+        "access_token": self.token,
+        "message_id": message_id,
         }
 
         json_body = {
-            "text": text,
-            "notify": notify,
+        "text": text,
+        "notify": notify,
         }
 
         if format:
             json_body["format"] = format
 
+    # 👉 Если есть клавиатура — ставим её
         if reply_markup:
             json_body["attachments"] = [reply_markup.to_attachment()]
+        else:
+        # 👉 Если нет — явно очищаем
+            json_body["attachments"] = []
 
-        print("[send_message] params:", params)
-        print("[send_message] json:", json_body)
 
         return await self.client.put(
-            f"{self.base_url}/messages",
-            params=params,
-            json=json_body,
-            headers={"Content-Type": "application/json"},
-            timeout=httpx.Timeout(30.0)
+        f"{self.base_url}/messages",
+        params=params,
+        json=json_body,
+        headers={"Content-Type": "application/json"},
+        timeout=httpx.Timeout(30.0)
         )
 
 
@@ -144,127 +145,171 @@ class Bot:
             timeout=httpx.Timeout(30.0)
         )
 
-    async def upload_file(self, file_path: str, media_type: str) -> str:
-        # 1. Получаем URL загрузки
+    async def upload_file(self, file_path: str, media_type: str) -> dict:
+    # 1. Запрашиваем upload URL и токен
         resp = await self._request("POST", "/uploads", params={"type": media_type})
-        upload_url = resp.get("url")
-        if not upload_url:
-            raise ValueError("Не удалось получить URL для загрузки")
+        print(resp)
+        upload_url = resp["url"]
+        file_token = resp.get("token")
 
-        # Загружаем файл
         mime_type, _ = mimetypes.guess_type(file_path)
+
+    # 2. Загружаем файл
         with open(file_path, "rb") as f:
             files = {"data": (file_path, f, mime_type or "application/octet-stream")}
+
             async with httpx.AsyncClient() as client:
-                upload_resp = await client.post(upload_url, files=files)
+                upload_resp = await client.post(
+                    upload_url,
+                    files=files,
+                    headers={"Authorization": self.token},
+                )
                 upload_resp.raise_for_status()
-
-                print("[DEBUG] upload_resp.status_code:", upload_resp.status_code)
-                print("[DEBUG] upload_resp.text:", upload_resp.text)
-
-                # Для видео и аудио токен будет в ответе сразу
-                if media_type in ("video", "audio"):
-                    result = upload_resp.json()
-                    if "token" in result:
-                        return result["token"]
-
-                # Для изображений и файлов токен возвращается в ответе на загрузку
-                if media_type == "image":
-                    try:
-                        result = upload_resp.json()
-                        print("[DEBUG] result:", result)
-                    except ValueError:
-                        raise ValueError("Не удалось распарсить JSON в ответе от сервера")
-
-                    if "photos" in result and result["photos"]:
-                        photo_key = next(iter(result["photos"]))
-                        token = result["photos"][photo_key].get("token")
-                        if token:
-                            print(f"[DEBUG] Извлечённый токен: {token}")
-                            return token
-                    raise ValueError("Не найден токен для изображения")
-
+                print(upload_resp)
+            # Для image/file: получаем token из JSON ответа
                 if media_type == "file":
                     try:
-                        result = upload_resp.json()
-                        if "token" in result:
-                            return result["token"]
+                        upload_json = upload_resp.json()
+                        file_token = upload_json.get("token")
                     except ValueError:
-                        raise ValueError("Не удалось распарсить JSON для файла")
+                        raise ValueError("MAX API вернул некорректный JSON для image/file")
+                    
+                if media_type == "image":
+                    result = upload_resp.json()
+                    if "photos" in result and result["photos"]:
+                        first_size = next(iter(result["photos"].values()))
+                        token = first_size.get("token")
+                        if token:
+                            return {"token": token}
+                    raise ValueError("Не найден токен для изображения")
+            # Для audio/video: token уже есть в resp, JSON ждать не нужно
+        print(file_token)
+        return {"token": file_token}
 
-        return None
+    async def message_reply(
+        self,
+        message_id: str,  # mid — на что отвечаем
+        chat_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        text: str = "",
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+        notify: bool = True,
+        format: Optional[str] = None
+        ):
+        if not (chat_id or user_id):
+            raise ValueError("Нужно передать chat_id или user_id")
 
-    async def send_file(
-            self,
-            file_path: str,
-            media_type: str,
-            chat_id: Optional[int] = None,
-            user_id: Optional[int] = None,
-            text: str = "",
-            reply_markup: Optional[InlineKeyboardMarkup] = None,
-            notify: bool = True,
-            format: Optional[str] = None, max_retries=3
-    ):
-        # Загрузка файла на сервер
-        tokens = await self.upload_file(file_path, media_type)
-        if not tokens:
-            raise ValueError("Не удалось получить токен для файла")
-
-        print("token:", tokens)
-        await asyncio.sleep(5)
-
-        # Базовое вложение — медиафайл
-        attachments = [
-            {
-                "type": media_type,
-                "payload": {"token": tokens}
-            }
-        ]
-
-        # Если передана клавиатура — добавляем её как вложение
-        if reply_markup:
-            attachments.append(reply_markup.to_attachment())
-
-        # Параметры и тело запроса — как в send_message
-        params = {
-            "access_token": self.token,
-        }
+        params = {}
         if chat_id:
             params["chat_id"] = chat_id
         else:
             params["user_id"] = user_id
+
         json_body = {
             "text": text,
             "notify": notify,
-            "attachments": attachments,
+            "link": {
+                "type": "reply",   # ❗ ключевой момент
+                "mid": message_id  # ❗ id сообщения
+            }
         }
 
         if format:
             json_body["format"] = format
 
-        print("[send_file] params:", params)
-        print("[send_file] json:", json_body)
+        if reply_markup:
+            json_body["attachments"] = [reply_markup.to_attachment()]
 
-        delay = 2  # секунд ожидания между попытками
+        return await self.client.post(
+            f"{self.base_url}/messages",
+            params=params,
+            json=json_body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": self.token  # ❗ обязательно
+            },
+            timeout=httpx.Timeout(30.0)
+        )
+
+    async def send_file(
+        self,
+        file_path: str,
+        media_type: str,
+        chat_id: Optional[int] = None,
+        user_id: Optional[int] = None,
+        text: str = "",
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
+        notify: bool = True,
+        format: Optional[str] = None,
+        max_retries: int = 10
+    ):
+    # 1. Получаем payload (а не token!)
+        payload = await self.upload_file(file_path, media_type)
+        print(payload)
+    # 2. Формируем attachments
+        attachments = [
+            {
+                "type": media_type,
+                "payload": payload  # ❗ ключевое изменение
+            }
+            ]
+
+        #if reply_markup:
+            #attachments.append(reply_markup.to_attachment())
+
+        json_body = {
+            "text": text,
+            #"notify": str(notify).lower(),
+            "attachments": attachments
+            }
+
+        if format:
+            json_body["format"] = format
+
+        if not (chat_id or user_id):
+            raise ValueError("Нужно передать chat_id или user_id")
+
+        params = {}
+        if chat_id:
+            params["chat_id"] = chat_id
+        else:
+            params["user_id"] = user_id
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": self.token  # ❗ теперь тут
+            }
+
+    # 3. Ретраи с backoff (улучшил сразу)
+        delay = 2
+
         for attempt in range(1, max_retries + 1):
             resp = await self.client.post(
                 f"{self.base_url}/messages",
                 params=params,
                 json=json_body,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=60
             )
-            print(f"Attempt {attempt}: RESP:", resp.status_code)
-            print("RESP_TEXT:", resp.text)
-            if resp.status_code != 400:
+            print(json_body)
+            print(resp)
+            if resp.status_code < 400:
                 return resp
-            if "attachment.not.ready" in resp.text or "not.processed" in resp.text:
-                print(f"Жду {delay} секунд и пробую еще раз...")
+
+
+            if (
+                "attachment.not.ready" in resp.text
+                or "not.processed" in resp.text
+                ):
+                print(f"Попытка {attempt}: файл обрабатывается, ждём {delay} сек...")
                 await asyncio.sleep(delay)
-            else:
-                # Какая-то другая ошибка, повторять не имеет смысла
-                break
+                delay *= 2
+                continue
+
+            break
+
         return resp
+
 
     async def download_media(self, url: str, dest_path: str = None):
         """
@@ -291,6 +336,11 @@ class Bot:
         async with httpx.AsyncClient() as client:
             resp = await client.head(url)
             return resp.headers.get("content-type")
+
+
+
+
+
 
 
 
