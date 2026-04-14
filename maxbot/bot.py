@@ -102,7 +102,6 @@ class Bot:
         format: Optional[str] = None):
 
         params = {
-        "access_token": self.token,
         "message_id": message_id,
         }
 
@@ -121,29 +120,10 @@ class Bot:
         # 👉 Если нет — явно очищаем
             json_body["attachments"] = []
 
-
-        return await self.client.put(
-        f"{self.base_url}/messages",
-        params=params,
-        json=json_body,
-        headers={"Content-Type": "application/json"},
-        timeout=httpx.Timeout(30.0)
-        )
-
+        return await self._request( "PUT", "/messages", params=params, json=json_body)
 
     async def delete_message(self, message_id: str):
-        params = {
-            "access_token": self.token,
-            "message_id": message_id,
-            # API может ожидать "true"/"false"
-        }
-
-        return await self.client.delete(
-            f"{self.base_url}/messages",
-            params=params,
-            headers={"Content-Type": "application/json"},
-            timeout=httpx.Timeout(30.0)
-        )
+        return await self._request("DELETE", "/messages", params={"message_id": message_id})
 
     async def upload_file(self, file_path: str, media_type: str) -> dict:
     # 1. Запрашиваем upload URL и токен
@@ -220,16 +200,7 @@ class Bot:
         if reply_markup:
             json_body["attachments"] = [reply_markup.to_attachment()]
 
-        return await self.client.post(
-            f"{self.base_url}/messages",
-            params=params,
-            json=json_body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": self.token  # ❗ обязательно
-            },
-            timeout=httpx.Timeout(30.0)
-        )
+        return await self._request("POST", "/messages", params=params, json=json_body)
 
     async def send_file(
         self,
